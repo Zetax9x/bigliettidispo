@@ -1,0 +1,94 @@
+name: Monitor Biglietti TicketOne
+
+on:
+  schedule:
+    # Ogni 5 minuti (minimo consentito da GitHub Actions)
+    - cron: '*/5 * * * *'
+  workflow_dispatch:
+    inputs:
+      send_status:
+        description: 'Invia riepilogo completo settori su Telegram'
+        required: false
+        default: 'true'
+        type: choice
+        options:
+          - 'true'
+          - 'false'
+      debug:
+        description: 'Abilita debug (salva HTML e log estesi)'
+        required: false
+        default: 'false'
+        type: choice
+        options:
+          - 'false'
+          - 'true'
+
+permissions:
+  contents: write  # necessario per committare state.json
+
+jobs:
+  check:
+    runs-on: ubuntu-latest
+    timeout-minutes: 8
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+        with:
+          ref: main   # lo stato viene sempre letto/scritto su main
+          token: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Setup Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+          cache: 'pip'
+
+      - name: Installa dipendenze Python
+        run: pip install -r requirements.txt
+
+      - name: Cache browser Playwright
+        uses: actions/cache@v4
+        id: pw-cache
+        with:
+          path: ~/.cache/ms-playwright
+          key: playwright-chromium-${{ hashFiles('requirements.txt') }}
+
+      - name: Installa Chromium (solo se non in cache)
+        if: steps.pw-cache.outputs.cache-hit != 'true'
+        run: playwright install chromium --with-deps
+
+      - name: Installa dipendenze sistema Chromium (se cache presente)
+        if: steps.pw-cache.outputs.cache-hit == 'true'
+        run: playwright install-deps chromium
+
+      - name: Controlla disponibilità biglietti
+        env:
+          TELEGRAM_BOT_TOKEN: ${{ secrets.TELEGRAM_BOT_TOKEN }}
+          TELEGRAM_CHAT_ID: ${{ secrets.TELEGRAM_CHAT_ID }}
+          DEBUG: ${{ github.event.inputs.debug || 'false' }}
+          # Su run manuale, invia sempre il riepilogo completo (default true).
+          # Su cron, solo se c'è un cambiamento.
+          SEND_STATUS: ${{ github.event_name == 'workflow_dispatch' && (github.event.inputs.send_status || 'true') || 'false' }}
+        run: python check_tickets.py
+
+      - name: Upload debug HTML (se presente)
+        if: always() && github.event.inputs.debug == 'true'
+        uses: actions/upload-artifact@v4
+        with:
+          name: debug-page-${{ github.run_number }}
+          path: debug_page.html
+          if-no-files-found: ignore
+          retention-days: 1
+
+      - name: Salva stato aggiornato
+        run: |
+          git config user.name "github-actions[bot]"
+          git config user.email "github-actions[bot]@users.noreply.github.com"
+          git add state.json
+          if git diff --staged --quiet; then
+            echo "Nessuna variazione di stato, niente da committare."
+          else
+            git commit -m "chore: aggiorna stato disponibilità biglietti [skip ci]"
+            git push origin main
+          fi
