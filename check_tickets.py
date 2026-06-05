@@ -109,13 +109,26 @@ def get_availability() -> Optional[dict[str, bool]]:
     """
     from playwright.sync_api import sync_playwright, TimeoutError as PWTimeout
 
+    try:
+        from playwright_stealth import stealth_sync
+        _has_stealth = True
+    except ImportError:
+        _has_stealth = False
+        print("playwright-stealth non disponibile, procedo senza.")
+
     captured: list[dict] = []
     dom_sectors: dict[str, bool] = {}
 
     with sync_playwright() as p:
         browser = p.chromium.launch(
             headless=True,
-            args=["--no-sandbox", "--disable-dev-shm-usage"],
+            args=[
+                "--no-sandbox",
+                "--disable-dev-shm-usage",
+                "--disable-blink-features=AutomationControlled",
+                "--disable-features=IsolateOrigins,site-per-process",
+                "--window-size=1366,768",
+            ],
         )
         context = browser.new_context(
             user_agent=(
@@ -124,20 +137,35 @@ def get_availability() -> Optional[dict[str, bool]]:
                 "Chrome/125.0.0.0 Safari/537.36"
             ),
             locale="it-IT",
-            viewport={"width": 1280, "height": 800},
+            viewport={"width": 1366, "height": 768},
             extra_http_headers={
                 "Accept-Language": "it-IT,it;q=0.9,en;q=0.8",
+                "Accept": "text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8",
             },
         )
         page = context.new_page()
 
+        # Nascondi i flag di automazione del browser
+        page.add_init_script("""
+            Object.defineProperty(navigator, 'webdriver', {get: () => undefined});
+            Object.defineProperty(navigator, 'plugins', {get: () => [1,2,3,4,5]});
+            Object.defineProperty(navigator, 'languages', {get: () => ['it-IT','it','en-US','en']});
+            window.chrome = {runtime: {}};
+        """)
+
+        if _has_stealth:
+            stealth_sync(page)
+
+        all_responses: list[str] = []
+
         def on_response(response):
             url = response.url
             status = response.status
+            content_type = response.headers.get("content-type", "")
+            all_responses.append(f"{status} {url}")
             if status != 200:
                 return
-            keywords = ("api", "catalog", "event", "sector", "zone", "availab", "seatmap", "ticket")
-            if not any(k in url.lower() for k in keywords):
+            if "json" not in content_type and "javascript" not in content_type:
                 return
             try:
                 data = response.json()
@@ -150,10 +178,15 @@ def get_availability() -> Optional[dict[str, bool]]:
         page.on("response", on_response)
 
         try:
-            page.goto(EVENT_URL, wait_until="networkidle", timeout=40000)
-            page.wait_for_timeout(3000)
+            page.goto(EVENT_URL, wait_until="networkidle", timeout=45000)
+            page.wait_for_timeout(4000)
         except PWTimeout:
             print("Timeout caricamento pagina, estraggo comunque dati disponibili.")
+
+        if DEBUG or not captured:
+            print(f"  Risposte HTTP totali: {len(all_responses)}")
+            for r in all_responses[:30]:
+                print(f"    {r}")
 
         # --- Parsing DOM come fallback ---
         try:
