@@ -6,6 +6,14 @@ on:
     - cron: '*/5 * * * *'
   workflow_dispatch:
     inputs:
+      send_status:
+        description: 'Invia riepilogo completo settori su Telegram'
+        required: false
+        default: 'true'
+        type: choice
+        options:
+          - 'true'
+          - 'false'
       debug:
         description: 'Abilita debug (salva HTML e log estesi)'
         required: false
@@ -59,6 +67,9 @@ jobs:
           TELEGRAM_BOT_TOKEN: ${{ secrets.TELEGRAM_BOT_TOKEN }}
           TELEGRAM_CHAT_ID: ${{ secrets.TELEGRAM_CHAT_ID }}
           DEBUG: ${{ github.event.inputs.debug || 'false' }}
+          # Su run manuale, invia sempre il riepilogo completo (default true).
+          # Su cron, solo se c'è un cambiamento.
+          SEND_STATUS: ${{ github.event_name == 'workflow_dispatch' && (github.event.inputs.send_status || 'true') || 'false' }}
         run: python check_tickets.py
 
       - name: Upload debug HTML (se presente)

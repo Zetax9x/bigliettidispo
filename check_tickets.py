@@ -16,6 +16,7 @@ STATE_FILE = Path("state.json")
 TELEGRAM_TOKEN = os.environ.get("TELEGRAM_BOT_TOKEN", "")
 TELEGRAM_CHAT = os.environ.get("TELEGRAM_CHAT_ID", "")
 DEBUG = os.environ.get("DEBUG", "").lower() in ("1", "true", "yes")
+SEND_STATUS = os.environ.get("SEND_STATUS", "").lower() in ("1", "true", "yes")
 
 
 def send_telegram(message: str) -> None:
@@ -263,6 +264,34 @@ def save_state(state: dict) -> None:
     )
 
 
+def format_status_report(sectors: dict[str, bool]) -> str:
+    """Formatta un riepilogo completo di tutti i settori."""
+    available = sorted(n for n, a in sectors.items() if a)
+    sold_out = sorted(n for n, a in sectors.items() if not a)
+
+    lines = [
+        "📊 <b>Stato settori — Ascoli vs Union Brescia</b>",
+        "Play-off Serie C 2025/2026\n",
+    ]
+
+    if available:
+        lines.append("✅ <b>Disponibili:</b>")
+        lines.extend(f"  • {n}" for n in available)
+    else:
+        lines.append("✅ <b>Disponibili:</b> nessuno")
+
+    lines.append("")
+
+    if sold_out:
+        lines.append("❌ <b>Esauriti:</b>")
+        lines.extend(f"  • {n}" for n in sold_out)
+    else:
+        lines.append("❌ <b>Esauriti:</b> nessuno")
+
+    lines.append(f'\n<a href="{EVENT_URL}">🔗 Pagina acquisto TicketOne</a>')
+    return "\n".join(lines)
+
+
 def main() -> None:
     print("=== Monitor biglietti TicketOne ===")
     print(f"URL: {EVENT_URL}")
@@ -276,7 +305,6 @@ def main() -> None:
         state["consecutive_failures"] = failures
         save_state(state)
         print(f"Errore #{failures}: impossibile leggere disponibilità.")
-        # Notifica Telegram solo dopo 5 fallimenti consecutivi
         if failures == 5:
             send_telegram(
                 "⚠️ <b>Monitor biglietti: errore</b>\n\n"
@@ -287,6 +315,7 @@ def main() -> None:
 
     state["consecutive_failures"] = 0
     prev = state.get("sectors", {})
+    is_first_run = not prev
 
     print(f"Settori rilevati ({len(sectors)}): {sectors}")
 
@@ -300,6 +329,7 @@ def main() -> None:
         if not avail and prev.get(name, False)
     ]
 
+    # --- Notifica cambiamenti ---
     if newly_available:
         elenco = "\n".join(f"  • {s}" for s in newly_available)
         msg = (
@@ -307,14 +337,23 @@ def main() -> None:
             "⚽ <b>Ascoli vs Union Brescia</b>\n"
             "Play-off Serie C 2025/2026\n\n"
             f"Settori tornati disponibili:\n{elenco}\n\n"
-            f'<a href="{EVENT_URL}">👉 Acquista ora su TicketOne</a>'
+            + format_status_report(sectors)
+        )
+        send_telegram(msg)
+    elif went_sold_out:
+        elenco = "\n".join(f"  • {s}" for s in went_sold_out)
+        msg = (
+            "🔴 <b>Settori appena esauriti:</b>\n"
+            f"{elenco}\n\n"
+            + format_status_report(sectors)
         )
         send_telegram(msg)
     else:
-        print("Nessuna disponibilità nuova.")
+        print("Nessun cambiamento di disponibilità.")
 
-    if DEBUG and went_sold_out:
-        print(f"Settori esauriti (novità): {went_sold_out}")
+    # --- Riepilogo completo: al primo avvio o su richiesta esplicita ---
+    if (is_first_run or SEND_STATUS) and not newly_available and not went_sold_out:
+        send_telegram(format_status_report(sectors))
 
     state["sectors"] = sectors
     save_state(state)
