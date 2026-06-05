@@ -4,3 +4,5 @@ __pycache__/
 venv/
 *.egg-info/
 debug_page.html
+.env
+monitor.log

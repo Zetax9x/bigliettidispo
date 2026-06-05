@@ -1,9 +1,9 @@
 name: Monitor Biglietti TicketOne
 
 on:
-  schedule:
-    # Ogni 5 minuti (minimo consentito da GitHub Actions)
-    - cron: '*/5 * * * *'
+  # GitHub Actions bloccato dagli IP di Azure: usare run.bat in locale su Windows
+  # schedule:
+  #   - cron: '*/5 * * * *'
   workflow_dispatch:
     inputs:
       send_status:
